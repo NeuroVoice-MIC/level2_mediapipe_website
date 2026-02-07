@@ -455,6 +455,10 @@ const CameraScreen = ({ onComplete }) => {
     
     console.log('🎯 FINAL RESULT:', riskResult.percentage + '% - ' + riskResult.level);
     console.log('═══════════════════════════════════════════════\n');
+
+    if (window.assessmentResult?.postMessage) {
+      window.assessmentResult.postMessage(JSON.stringify(riskResult));
+    }
     
     if (streamRef.current) {
       streamRef.current.getTracks().forEach(track => track.stop());
