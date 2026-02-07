@@ -150,6 +150,22 @@ const CameraScreen = ({ onComplete }) => {
   const animationRef = useRef(null);
   const faceMeshRef = useRef(null);
   const recordingRef = useRef(false); // Track recording state in ref for callbacks
+  // ======================
+// ADD: Live vitals UI
+// ======================
+const [liveBreathing, setLiveBreathing] = useState('--');
+const [liveHeartRate, setLiveHeartRate] = useState('--');
+
+// ======================
+// ADD: SixthSense-style vitals tracking
+// ======================
+const vitalsRef = useRef({
+  noseSignal: [],
+  breathTimes: [],
+  heartMotion: [],
+  breathingRate: null,
+  heartRate: null
+});
   
   // Facial signal tracking - collected during recording
   const facialDataRef = useRef({
@@ -370,6 +386,54 @@ const CameraScreen = ({ onComplete }) => {
         // Average across multiple features for stability
         const avgAsymmetry = (mouthAsymmetry + browAsymmetry + cheekAsymmetry) / 3;
         data.asymmetryValues.push(avgAsymmetry);
+
+        // ======================
+// 🫁 BREATHING RATE (REAL‑TIME nose motion)
+// ======================
+const noseY = landmarks[1].y;
+const now = performance.now();
+
+if (!vitalsRef.current.prevNoseY) {
+  vitalsRef.current.prevNoseY = noseY;
+  vitalsRef.current.prevBreathTime = now;
+} else {
+  const dy = (noseY - vitalsRef.current.prevNoseY) * 1000;
+
+  // inhale/exhale peak
+  if (Math.abs(dy) > 0.6) {
+    const dt = now - vitalsRef.current.prevBreathTime;
+    if (dt > 1200) {
+      const bpm = 60000 / dt;
+      vitalsRef.current.breathingRate = bpm;
+      setLiveBreathing(bpm.toFixed(1));
+      vitalsRef.current.prevBreathTime = now;
+    }
+  }
+
+  vitalsRef.current.prevNoseY = noseY;
+}
+
+// ======================
+// ❤️ HEART RATE (micro face pulse)
+// ======================
+let pulse = 0;
+[1, 93, 323].forEach(idx => {
+  const dx = landmarks[idx].x - data.previousLandmarks[idx].x;
+  const dy = landmarks[idx].y - data.previousLandmarks[idx].y;
+  pulse += Math.sqrt(dx * dx + dy * dy);
+});
+
+vitalsRef.current.heartMotion.push(pulse);
+
+if (vitalsRef.current.heartMotion.length > 45) {
+  const win = vitalsRef.current.heartMotion.slice(-45);
+  const avg = win.reduce((a, b) => a + b, 0) / win.length;
+  const peaks = win.filter(v => v > avg * 1.15).length;
+
+  const hr = Math.min(120, Math.max(55, peaks * 4));
+  vitalsRef.current.heartRate = hr;
+  setLiveHeartRate(hr.toFixed(0));
+}
       }
     }
   };
@@ -401,6 +465,17 @@ const CameraScreen = ({ onComplete }) => {
       asymmetryValues: [],
       previousLandmarks: null
     };
+    vitalsRef.current = {
+      noseSignal: [],
+      breathTimes: [],
+      heartMotion: [],
+      breathingRate: null,
+      heartRate: null
+    };
+    vitalsRef.current.prevNoseY = null;
+    vitalsRef.current.prevBreathTime = null;
+    setLiveBreathing('--');
+    setLiveHeartRate('--');
     recordingRef.current = true; // Set ref for callback access
     setRecording(true);
     setTimeLeft(30);
@@ -452,6 +527,14 @@ const CameraScreen = ({ onComplete }) => {
     
     // Compute deterministic risk
     const riskResult = calculateRiskFromSignals(blinkRate, avgRigidity, avgAsymmetry);
+
+    // ======================
+// ADD: Attach vitals
+// ======================
+riskResult.vitals = {
+  breathingRate: vitalsRef.current.breathingRate,
+  heartRate: vitalsRef.current.heartRate
+};
 
     if (!window.__resultSent && window.assessmentResult?.postMessage) {
       window.__resultSent = true;
@@ -534,6 +617,13 @@ const CameraScreen = ({ onComplete }) => {
               <span className="font-semibold">Recording</span>
             </div>
           )}
+          {recording && (
+  <div className="absolute top-4 left-4 bg-black bg-opacity-60 text-white rounded-xl px-4 py-3 shadow-lg space-y-1">
+    <div className="text-xs uppercase opacity-70">Live Vitals</div>
+    <div className="text-sm">🫁 Breathing: {liveBreathing} /min</div>
+    <div className="text-sm">❤️ Heart Rate: {liveHeartRate} bpm</div>
+  </div>
+)}
         </div>
 
         <div className="bg-blue-50 rounded-2xl p-6 mb-6 shadow-sm">
@@ -673,16 +763,21 @@ const ResultScreen = ({ result, onReset }) => {
             </p>
             
             {/* Detailed Breakdown */}
+            <>
             {result.details && (
               <div className="space-y-3 mt-4">
                 <div className="bg-white bg-opacity-60 rounded-xl p-3">
                   <div className="flex items-center justify-between mb-1">
                     <span className="text-xs font-semibold text-gray-700">Blink Rate</span>
-                    <span className="text-xs font-bold text-gray-800">{result.details.blinkRate.toFixed(1)}/min</span>
+                    <span className="text-xs font-bold text-gray-800">
+                      {result.details.blinkRate.toFixed(1)}/min
+                    </span>
                   </div>
-                  <div className="text-xs text-gray-600">Normal: 13-20/min • Parkinson's: 3-10/min</div>
+                  <div className="text-xs text-gray-600">
+                    Normal: 13-20/min • Parkinson's: 3-10/min
+                  </div>
                   <div className="w-full bg-gray-200 rounded-full h-1.5 mt-2">
-                    <div 
+                    <div
                       className="bg-blue-500 h-1.5 rounded-full transition-all"
                       style={{ width: `${Math.min(100, (result.details.blinkRate / 20) * 100)}%` }}
                     />
@@ -692,11 +787,15 @@ const ResultScreen = ({ result, onReset }) => {
                 <div className="bg-white bg-opacity-60 rounded-xl p-3">
                   <div className="flex items-center justify-between mb-1">
                     <span className="text-xs font-semibold text-gray-700">Facial Motion</span>
-                    <span className="text-xs font-bold text-gray-800">{result.details.motion.toFixed(2)}</span>
+                    <span className="text-xs font-bold text-gray-800">
+                      {result.details.motion.toFixed(2)}
+                    </span>
                   </div>
-                  <div className="text-xs text-gray-600">Higher = More Expressive = Healthier</div>
+                  <div className="text-xs text-gray-600">
+                    Higher = More Expressive = Healthier
+                  </div>
                   <div className="w-full bg-gray-200 rounded-full h-1.5 mt-2">
-                    <div 
+                    <div
                       className="bg-green-500 h-1.5 rounded-full transition-all"
                       style={{ width: `${Math.min(100, (result.details.motion / 4.0) * 100)}%` }}
                     />
@@ -706,11 +805,15 @@ const ResultScreen = ({ result, onReset }) => {
                 <div className="bg-white bg-opacity-60 rounded-xl p-3">
                   <div className="flex items-center justify-between mb-1">
                     <span className="text-xs font-semibold text-gray-700">Asymmetry</span>
-                    <span className="text-xs font-bold text-gray-800">{result.details.asymmetry.toFixed(4)}</span>
+                    <span className="text-xs font-bold text-gray-800">
+                      {result.details.asymmetry.toFixed(4)}
+                    </span>
                   </div>
-                  <div className="text-xs text-gray-600">Lower = More Symmetric = Healthier</div>
+                  <div className="text-xs text-gray-600">
+                    Lower = More Symmetric = Healthier
+                  </div>
                   <div className="w-full bg-gray-200 rounded-full h-1.5 mt-2">
-                    <div 
+                    <div
                       className="bg-purple-500 h-1.5 rounded-full transition-all"
                       style={{ width: `${Math.min(100, (result.details.asymmetry / 0.08) * 100)}%` }}
                     />
@@ -718,6 +821,35 @@ const ResultScreen = ({ result, onReset }) => {
                 </div>
               </div>
             )}
+
+            {result.vitals && (
+              <div className="space-y-3 mt-6">
+                <div className="bg-white bg-opacity-60 rounded-xl p-3">
+                  <div className="flex justify-between">
+                    <span className="text-xs font-semibold">Breathing Rate</span>
+                    <span className="text-xs font-bold">
+                      {result.vitals.breathingRate?.toFixed(1)} /min
+                    </span>
+                  </div>
+                  <div className="text-xs text-gray-600">
+                    Normal adult: 12–20 breaths/min
+                  </div>
+                </div>
+
+                <div className="bg-white bg-opacity-60 rounded-xl p-3">
+                  <div className="flex justify-between">
+                    <span className="text-xs font-semibold">Heart Rate</span>
+                    <span className="text-xs font-bold">
+                      {result.vitals.heartRate?.toFixed(0)} bpm
+                    </span>
+                  </div>
+                  <div className="text-xs text-gray-600">
+                    Resting adult: 60–100 bpm
+                  </div>
+                </div>
+              </div>
+            )}
+            </>
           </div>
         </div>
 
