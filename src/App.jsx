@@ -452,13 +452,16 @@ const CameraScreen = ({ onComplete }) => {
     
     // Compute deterministic risk
     const riskResult = calculateRiskFromSignals(blinkRate, avgRigidity, avgAsymmetry);
+
+    if (!window.__resultSent && window.assessmentResult?.postMessage) {
+      window.__resultSent = true;
+      window.assessmentResult.postMessage(JSON.stringify(riskResult));
+    }
     
     console.log('🎯 FINAL RESULT:', riskResult.percentage + '% - ' + riskResult.level);
     console.log('═══════════════════════════════════════════════\n');
 
-    if (window.assessmentResult?.postMessage) {
-      window.assessmentResult.postMessage(JSON.stringify(riskResult));
-    }
+    setTimeout(() => onComplete(riskResult), 500);
     
     if (streamRef.current) {
       streamRef.current.getTracks().forEach(track => track.stop());
